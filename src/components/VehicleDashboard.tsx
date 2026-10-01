@@ -29,7 +29,7 @@ import { ActiveCheckIn, LogItem, AccessType } from '../types';
 import { QuickVehicleRegister, VehicleToastType } from './QuickVehicleRegister';
 import { Car, Download, History, Users, Settings, LogOut, Clock, Building2 } from 'lucide-react';
 import { normalizePlate, formatPlateForDisplay } from '../domain/plate';
-import { buildSecurityReportCSV, downloadSecurityReportCSV } from '../utils/report';
+import { buildVehicleReportCSV, downloadVehicleReportCSV } from '../utils/vehicleReport';
 import { getLocalDateISO } from '../utils/datetime';
 import { GuardProfile, IncidentReport, Persona } from '../types';
 
@@ -93,14 +93,8 @@ export function VehicleDashboard({
 
   const handleExportCSV = () => {
     try {
-      const csvContent = buildSecurityReportCSV({
-        logs,
-        activeInside,
-        profile,
-        incidents,
-        statusHeader: 'Estado / Permanencia',
-      });
-      downloadSecurityReportCSV(csvContent, 'SecurGuard-Vehiculos-' + getLocalDateISO() + '.csv');
+      const csvContent = buildVehicleReportCSV({ logs, activeInside, profile });
+      downloadVehicleReportCSV(csvContent, 'SecurGuard-Vehiculos-' + getLocalDateISO() + '.csv');
     } catch (e) {
       onShowToast({ message: 'Error exportando CSV.', type: 'alert' });
     }
