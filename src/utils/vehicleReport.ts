@@ -10,13 +10,20 @@
  * reconstructSessions from domain/access.ts) into ONE row per session:
  *
  *   Fecha | Hora Entrada | Hora Salida | Empresa | Patente | Estado | Permanencia
+ *         | Tipo de Salida | Observación
  *
  * Rules:
  *   - Does NOT modify logs, activeInside, handleVehicleEntry, or handleVehicleExit.
  *   - Does NOT eliminate Entrada/Salida events from the history log.
  *   - Matches by entryId (supports Entrada → Salida → Entrada → Salida).
  *   - Entry without exit = row with empty Salida and Estado "DENTRO".
+ *   - SALIDA DIRECTA (Salida without local Entrada, flagged `directExit`) gets its
+ *     own row: Hora Entrada is "—" (an entry hour is NEVER invented) and
+ *     Tipo de Salida = "Salida directa".
  *   - Uses RFC 4180 CSV escaping via csvRow/csvDocument.
+ *
+ * Compatibilidad: las 7 columnas originales conservan su orden y significado;
+ * "Tipo de Salida" y "Observación" se AÑADEN al final (ampliación mínima).
  */
 
 import { LogItem, ActiveCheckIn, GuardProfile } from "../types";
@@ -73,9 +80,21 @@ export const buildVehicleReportCSV = ({
     s => s.entryLog.type === "VEHICULO"
   );
 
-  // Build rows: one per vehicle session
-  const headers = ["Fecha", "Hora Entrada", "Hora Salida", "Empresa", "Patente", "Estado", "Permanencia"];
-  const rows = vehicleSessions.map(session => {
+  // Build rows: one per vehicle session (Entrada → Salida), plus one per direct exit
+  const headers = [
+    "Fecha",
+    "Hora Entrada",
+    "Hora Salida",
+    "Empresa",
+    "Patente",
+    "Estado",
+    "Permanencia",
+    // --- Ampliación mínima (columnas 8-9) para distinguir SALIDA DIRECTA ---
+    "Tipo de Salida",
+    "Observación",
+  ];
+
+  const sessionRows = vehicleSessions.map(session => {
     const entry = session.entryLog;
     const exit = session.exitLog;
     const plate = formatPlateForDisplay(entry.plate || "");
@@ -85,13 +104,40 @@ export const buildVehicleReportCSV = ({
     return [
       entry.date, // Fecha
       entry.time, // Hora Entrada
-      exit ? exit.time : "—", // Hora Salida (em-dash si DENTRO) (empty if inside)
+      exit ? exit.time : "—", // Hora Salida (em-dash si DENTRO)
       company, // Empresa
       plate, // Patente
       isStillInside ? "DENTRO" : "FUERA", // Estado
       formatSessionDuration(session, entry), // Permanencia
+      isStillInside ? "—" : (exit?.exitType?.trim() ? exit.exitType : "Salida normal"), // Tipo de Salida
+      exit?.observation?.trim() ? exit.observation : "—", // Observación
     ];
   });
+
+  // SALIDA DIRECTA: salidas registradas SIN Entrada local (sin entryId, a
+  // propósito). No son sesiones para reconstructSessions, así que se emiten
+  // como filas propias con la hora de entrada vacía ("—").
+  const directExitLogs = logs
+    .filter(l => l.action === "Salida" && l.directExit === true)
+    .reverse(); // logs llega nuevo→viejo; se emite viejo→nuevo (igual que las sesiones)
+
+  const directExitRows = directExitLogs.map(exit => {
+    const company = exit.name && exit.name !== "Vehículo" ? exit.name : "—";
+
+    return [
+      exit.date, // Fecha
+      "—", // Hora Entrada (NO se inventa una entrada local)
+      exit.time, // Hora Salida
+      company, // Empresa
+      formatPlateForDisplay(exit.plate || ""), // Patente
+      "FUERA", // Estado
+      "—", // Permanencia
+      "Salida directa", // Tipo de Salida
+      exit.observation?.trim() ? exit.observation : "—", // Observación
+    ];
+  });
+
+  const rows = [...sessionRows, ...directExitRows];
 
   // Metadata header (mirrors the style of buildSecurityReportCSV)
   const topMeta = [
@@ -101,8 +147,9 @@ export const buildVehicleReportCSV = ({
     csvRow(["Fecha de Exportación:", new Date().toLocaleString()]),
     csvRow(["Vehículos Actualmente Dentro:", countVehiclesInside(activeInside)]),
     csvRow(["Total de Sesiones Vehiculares:", vehicleSessions.length]),
+    csvRow(["Salidas Directas (sin entrada local):", directExitLogs.length]),
     "",
-    "--- SESIONES VEHICULARES (Entrada → Salida consolidadas por entryId) ---",
+    "--- SESIONES VEHICULARES (Entrada → Salida por entryId; DENTRO si sigue abierta; SALIDA DIRECTA si no hubo entrada local) ---",
   ].join("\r\n");
 
   const tableContent = csvDocument([headers, ...rows]);

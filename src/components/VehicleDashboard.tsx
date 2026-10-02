@@ -25,7 +25,7 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { ActiveCheckIn, LogItem, AccessType } from '../types';
+import { ActiveCheckIn, LogItem, AccessType, VehicleEntryResult, VehicleDirectExitResult, VehicleExitOptions } from '../types';
 import { QuickVehicleRegister, VehicleToastType } from './QuickVehicleRegister';
 import { Car, Download, History, Users, Settings, LogOut, Clock, Building2 } from 'lucide-react';
 import { normalizePlate, formatPlateForDisplay } from '../domain/plate';
@@ -42,8 +42,9 @@ export interface VehicleDashboardProps {
   incidents: IncidentReport[];
   // Vehicle handlers
   isVehicleInside: (plate: string) => boolean;
-  onVehicleEntry: (plate: string, company?: string) => LogItem | null;
-  onVehicleExit: (plate: string, company?: string) => boolean;
+  onVehicleEntry: (plate: string, company?: string) => VehicleEntryResult;
+  onVehicleExit: (plate: string, options?: VehicleExitOptions) => boolean;
+  onVehicleDirectExit: (plate: string, options?: VehicleExitOptions) => VehicleDirectExitResult;
   // Reused from master
   onMarkExit: (id: string) => void;
   onRemoveMovement: (id: string) => void;
@@ -66,6 +67,7 @@ export function VehicleDashboard({
   isVehicleInside,
   onVehicleEntry,
   onVehicleExit,
+  onVehicleDirectExit,
   onMarkExit,
   onRemoveMovement,
   onOpenRegister,
@@ -121,6 +123,7 @@ export function VehicleDashboard({
           isVehicleInside={isVehicleInside}
           onVehicleEntry={onVehicleEntry}
           onVehicleExit={onVehicleExit}
+          onVehicleDirectExit={onVehicleDirectExit}
           onShowToast={onShowToast}
         />
       </div>
@@ -172,7 +175,7 @@ export function VehicleDashboard({
                   </div>
                   <button
                     onClick={() => {
-                      const ok = onVehicleExit(v.plate || '', v.name);
+                      const ok = onVehicleExit(v.plate || '');
                       if (ok) {
                         const timeStr = new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
                         onShowToast({
@@ -230,9 +233,13 @@ export function VehicleDashboard({
                       {formatPlateForDisplay(log.plate || '')}
                     </span>
                     <div className="flex items-center gap-2 text-[8px] text-slate-500">
-                      <span className={log.action === 'Entrada' ? 'text-emerald-400' : 'text-rose-400'}>
-                        {log.action}
-                      </span>
+                      {log.directExit ? (
+                        <span className="text-rose-300 font-bold uppercase">Salida directa</span>
+                      ) : (
+                        <span className={log.action === 'Entrada' ? 'text-emerald-400' : 'text-rose-400'}>
+                          {log.action}
+                        </span>
+                      )}
                       <span>{log.time}</span>
                       {log.name !== 'Vehículo' && (
                         <>
@@ -240,7 +247,18 @@ export function VehicleDashboard({
                           <span className="truncate max-w-[100px]">{log.name}</span>
                         </>
                       )}
+                      {log.action === 'Salida' && log.exitType && (
+                        <>
+                          <span>·</span>
+                          <span className="truncate max-w-[110px] text-slate-400">{log.exitType}</span>
+                        </>
+                      )}
                     </div>
+                    {log.observation && (
+                      <p className="text-[8px] text-amber-300/80 truncate max-w-[200px] mt-0.5" title={log.observation}>
+                        Obs: {log.observation}
+                      </p>
+                    )}
                   </div>
                 </div>
                 {/* Eliminar movimiento oculto: solo en menú secundario (evita confusión con SALIDA) */}

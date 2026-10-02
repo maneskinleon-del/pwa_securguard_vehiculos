@@ -22,8 +22,16 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Car, LogIn, LogOut, CheckCircle2, AlertCircle, Trash2, Building } from 'lucide-react';
-import { ActiveCheckIn, LogItem } from '../types';
+import { Car, LogIn, LogOut, CheckCircle2, AlertCircle, Trash2, Building, AlertTriangle } from 'lucide-react';
+import {
+  ActiveCheckIn,
+  LogItem,
+  VehicleEntryResult,
+  VehicleDirectExitResult,
+  VehicleExitOptions,
+  VehicleExitType,
+  VEHICLE_EXIT_TYPES,
+} from '../types';
 import { normalizePlate, isValidPlate, formatPlateForDisplay } from '../domain/plate';
 
 export type VehicleToastType = 'success' | 'alert' | 'info';
@@ -32,8 +40,9 @@ export interface QuickVehicleRegisterProps {
   activeInside: ActiveCheckIn[];
   logs: LogItem[];
   isVehicleInside: (plate: string) => boolean;
-  onVehicleEntry: (plate: string, company?: string) => LogItem | null;
-  onVehicleExit: (plate: string, company?: string) => boolean;
+  onVehicleEntry: (plate: string, company?: string) => VehicleEntryResult;
+  onVehicleExit: (plate: string, options?: VehicleExitOptions) => boolean;
+  onVehicleDirectExit: (plate: string, options?: VehicleExitOptions) => VehicleDirectExitResult;
   onShowToast: (toast: { message: string; type: VehicleToastType }) => void;
 }
 
@@ -43,10 +52,13 @@ export function QuickVehicleRegister({
   isVehicleInside,
   onVehicleEntry,
   onVehicleExit,
+  onVehicleDirectExit,
   onShowToast,
 }: QuickVehicleRegisterProps) {
   const [plateInput, setPlateInput] = useState('');
   const [companyInput, setCompanyInput] = useState('');
+  const [exitType, setExitType] = useState<VehicleExitType | ''>('');
+  const [observation, setObservation] = useState('');
   const [isValidating, setIsValidating] = useState(false);
   const plateRef = useRef<HTMLInputElement>(null);
   const companyRef = useRef<HTMLInputElement>(null);
@@ -82,6 +94,8 @@ export function QuickVehicleRegister({
   const resetField = () => {
     setPlateInput('');
     setCompanyInput('');
+    setExitType('');
+    setObservation('');
     setTimeout(() => plateRef.current?.focus(), 50);
   };
 
@@ -108,31 +122,41 @@ export function QuickVehicleRegister({
       onShowToast({ message: 'Patente inválida. Usa formato chileno (ej. ABCD12, ABC123, AB1234).', type: 'alert' });
       return;
     }
-    const wasInside = isVehicleInside(canonical);
     const company = companyInput.trim() || undefined;
 
     setIsValidating(true);
     const result = onVehicleEntry(canonical, company);
     setIsValidating(false);
 
-    if (result) {
-      if (wasInside) {
-        onShowToast({
-          message: formatPlateForDisplay(canonical) + ': Salida ' + result.time + ' → Nueva Entrada',
-          type: 'success',
-        });
-      } else {
-        const companyStr = company ? ' · ' + company : '';
-        onShowToast({
-          message: 'Entrada ' + formatPlateForDisplay(canonical) + companyStr + ' · ' + result.time,
-          type: 'success',
-        });
-      }
-    } else {
-      onShowToast({ message: 'No se pudo registrar la entrada.', type: 'alert' });
+    if (result.ok === true) {
+      const companyStr = company ? ' · ' + company : '';
+      onShowToast({
+        message: 'Entrada ' + formatPlateForDisplay(canonical) + companyStr + ' · ' + result.log.time,
+        type: 'success',
+      });
+      resetField();
+      return;
     }
-    resetField();
+
+    // MATCH: ya hay una sesión abierta → NO se creó otra entrada.
+    // Se conserva el campo para que el guardia vea la sesión y pueda dar SALIDA.
+    if (result.ok === false && result.reason === 'already_inside') {
+      onShowToast({
+        message: '⚠️ VEHÍCULO YA ESTÁ DENTRO · ' + formatPlateForDisplay(canonical) + ' · entrada ' + result.session.entryTime,
+        type: 'alert',
+      });
+      return;
+    }
+
+    onShowToast({ message: 'No se pudo registrar la entrada.', type: 'alert' });
   };
+
+  /** Opciones de salida comunes a SALIDA normal y SALIDA DIRECTA. */
+  const buildExitOptions = (): VehicleExitOptions => ({
+    company: companyInput.trim() || undefined,
+    exitType: exitType || undefined,
+    observation: observation.trim() || undefined,
+  });
 
   const handleExit = () => {
     const canonical = normalizePlate(plateInput);
@@ -141,22 +165,55 @@ export function QuickVehicleRegister({
       return;
     }
     if (!isVehicleInside(canonical)) {
-      onShowToast({ message: formatPlateForDisplay(canonical) + ' no está dentro. Registra ENTRADA primero.', type: 'alert' });
-      resetField();
+      onShowToast({ message: formatPlateForDisplay(canonical) + ' no está dentro. Usa SALIDA DIRECTA.', type: 'alert' });
       return;
     }
 
     setIsValidating(true);
-    const ok = onVehicleExit(canonical, companyInput.trim() || undefined);
+    const ok = onVehicleExit(canonical, buildExitOptions());
     setIsValidating(false);
 
     if (ok) {
       const timeStr = new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
       onShowToast({ message: 'Salida ' + formatPlateForDisplay(canonical) + ' · ' + timeStr, type: 'success' });
+      resetField();
     } else {
       onShowToast({ message: 'No se pudo registrar la salida.', type: 'alert' });
     }
-    resetField();
+  };
+
+  /**
+   * SALIDA DIRECTA: salida sin entrada local en esta portería.
+   * No inventa hora de entrada; queda marcada como directa.
+   */
+  const handleDirectExit = () => {
+    const canonical = normalizePlate(plateInput);
+    if (!isValidPlate(canonical)) {
+      onShowToast({ message: 'Patente inválida. Usa formato chileno (ej. ABCD12).', type: 'alert' });
+      return;
+    }
+    if (isVehicleInside(canonical)) {
+      onShowToast({ message: formatPlateForDisplay(canonical) + ' está dentro. Usa SALIDA.', type: 'alert' });
+      return;
+    }
+
+    setIsValidating(true);
+    const result = onVehicleDirectExit(canonical, buildExitOptions());
+    setIsValidating(false);
+
+    if (result.ok === true) {
+      onShowToast({
+        message: 'Salida directa ' + formatPlateForDisplay(canonical) + ' · ' + result.log.time,
+        type: 'success',
+      });
+      resetField();
+      return;
+    }
+    if (result.ok === false && result.reason === 'already_inside') {
+      onShowToast({ message: formatPlateForDisplay(canonical) + ' está dentro. Usa SALIDA.', type: 'alert' });
+      return;
+    }
+    onShowToast({ message: 'No se pudo registrar la salida directa.', type: 'alert' });
   };
 
   const clearPlate = () => {
@@ -268,56 +325,124 @@ export function QuickVehicleRegister({
         )}
       </div>
 
-      {/* ENTRADA / SALIDA buttons */ }
+      {/* TIPO DE SALIDA (sólo salida directa: no hay sesión abierta) */ }
+      {inputValid && !inside && (
+        <div>
+          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 block">
+            TIPO DE SALIDA <span className="text-slate-600 font-normal">(opcional)</span>
+          </label>
+          <select
+            value={exitType}
+            onChange={(e) => setExitType(e.target.value as VehicleExitType | '')}
+            className="w-full bg-[#020617] border border-slate-700 rounded-2xl px-4 py-3 text-sm text-white transition-all focus:outline-none focus:ring-2 focus:border-indigo-400 focus:ring-indigo-400/30"
+          >
+            <option value="">— Sin declarar —</option>
+            {VEHICLE_EXIT_TYPES.map(t => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {/* OBSERVACIÓN (opcional, nunca bloquea el movimiento) */ }
+      {inputValid && (
+        <div>
+          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 block">
+            OBSERVACIÓN <span className="text-slate-600 font-normal">(opcional)</span>
+          </label>
+          <input
+            type="text"
+            inputMode="text"
+            autoComplete="off"
+            value={observation}
+            onChange={(e) => setObservation(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setObservation('');
+              }
+            }}
+            placeholder="Ej. no entrega nombre del conductor"
+            className="w-full bg-[#020617] border border-slate-700 rounded-2xl px-4 py-3 text-sm text-white placeholder:text-slate-600/40 transition-all focus:outline-none focus:ring-2 focus:border-indigo-400 focus:ring-indigo-400/30"
+          />
+        </div>
+      )}
+
+      {/* ENTRADA / SALIDA (o SALIDA DIRECTA si no está dentro) */ }
       <div className="grid grid-cols-2 gap-3">
         <button
           onClick={handleEntry}
           disabled={isValidating || !inputValid}
           className={`flex items-center justify-center gap-2 py-4 rounded-2xl text-sm font-extrabold uppercase tracking-wider transition-all disabled:opacity-40 ${
-            inputValid
+            inputValid && !inside
               ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20 active:scale-95'
+              : inputValid
+              ? 'bg-amber-600/80 hover:bg-amber-500/80 text-white shadow-lg shadow-amber-600/20 active:scale-95'
               : 'bg-slate-800 text-slate-500 cursor-not-allowed'
           }`}
         >
           <LogIn className="w-5 h-5" />
           ENTRADA
         </button>
-        <button
-          onClick={handleExit}
-          disabled={isValidating || !inputValid}
-          className={`flex items-center justify-center gap-2 py-4 rounded-2xl text-sm font-extrabold uppercase tracking-wider transition-all disabled:opacity-40 ${
-            inputValid && inside
-              ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-600/20 active:scale-95'
-              : inputValid
-              ? 'bg-slate-800 text-slate-400 cursor-not-allowed'
-              : 'bg-slate-800 text-slate-500 cursor-not-allowed'
-          }`}
-        >
-          <LogOut className="w-5 h-5" />
-          SALIDA
-        </button>
+        {inside ? (
+          <button
+            onClick={handleExit}
+            disabled={isValidating || !inputValid}
+            className={`flex items-center justify-center gap-2 py-4 rounded-2xl text-sm font-extrabold uppercase tracking-wider transition-all disabled:opacity-40 ${
+              inputValid
+                ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-600/20 active:scale-95'
+                : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+            }`}
+          >
+            <LogOut className="w-5 h-5" />
+            SALIDA
+          </button>
+        ) : (
+          <button
+            onClick={handleDirectExit}
+            disabled={isValidating || !inputValid}
+            className={`flex items-center justify-center gap-2 py-4 rounded-2xl text-sm font-extrabold uppercase tracking-wider transition-all disabled:opacity-40 ${
+              inputValid
+                ? 'bg-rose-800 hover:bg-rose-700 text-white shadow-lg shadow-rose-800/20 active:scale-95 border border-rose-600/40'
+                : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+            }`}
+            title="Salida sin entrada registrada en esta portería"
+          >
+            <LogOut className="w-5 h-5" />
+            SALIDA DIRECTA
+          </button>
+        )}
       </div>
 
-      {/* Estado actual de la patente */ }
-      {currentPlate && (
-        <div className={`flex items-center justify-between p-3 rounded-2xl text-xs font-mono transition-all ${
-          inside
-            ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-300'
-            : 'bg-slate-900/40 border border-slate-800 text-slate-400'
-        }`}>
+      {/* MATCH: la patente ya tiene sesión abierta → NO se crea otra entrada */ }
+      {currentPlate && inside && activeSession && (
+        <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-1.5">
+          <div className="flex items-center gap-2 text-amber-300">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+            <span className="text-[11px] font-black uppercase tracking-widest">Vehículo ya está dentro</span>
+          </div>
+          <div className="text-[10px] font-mono text-slate-300 space-y-0.5">
+            <p>Patente: <span className="text-white font-bold">{formatPlateForDisplay(activeSession.plate || currentPlate)}</span></p>
+            <p>Empresa: <span className="text-slate-200">{activeSession.name !== 'Vehículo' ? activeSession.name : '— Sin empresa'}</span></p>
+            <p>Entrada registrada: <span className="text-emerald-300">{activeSession.entryTime}</span></p>
+          </div>
+          <p className="text-[9px] text-amber-200/80">
+            No se creó otra entrada. Registra SALIDA para cerrar esta sesión.
+          </p>
+        </div>
+      )}
+
+      {/* Estado actual de la patente (sólo cuando NO hay match) */ }
+      {currentPlate && !inside && (
+        <div className="flex items-center justify-between p-3 rounded-2xl text-xs font-mono transition-all bg-slate-900/40 border border-slate-800 text-slate-400">
           <div className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${inside ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`}></span>
-            <span>{formatPlateForDisplay(currentPlate)} · {inside ? 'DENTRO' : 'FUERA'}</span>
+            <span className="w-2 h-2 rounded-full bg-slate-500"></span>
+            <span>{formatPlateForDisplay(currentPlate)} · FUERA</span>
           </div>
           <div className="flex flex-col items-end gap-0.5">
             {lastMovement && (
               <span className="text-[9px] text-slate-500">
                 Último: {lastMovement.action} {lastMovement.time}
-              </span>
-            )}
-            {activeSession && (
-              <span className="text-[9px] text-slate-500 truncate max-w-[120px]">
-                {activeSession.name !== 'Vehículo' ? activeSession.name : '—'}
               </span>
             )}
           </div>

@@ -42,6 +42,7 @@ export default function App() {
     isVehicleInside,
     handleVehicleEntry,
     handleVehicleExit,
+    handleVehicleDirectExit,
   } = useAppState();
 
   // Modal display toggles
@@ -156,6 +157,7 @@ export default function App() {
             isVehicleInside={isVehicleInside}
             onVehicleEntry={handleVehicleEntry}
             onVehicleExit={handleVehicleExit}
+            onVehicleDirectExit={handleVehicleDirectExit}
             onMarkExit={handleMarkExit}
             onRemoveMovement={handleRemoveMovement}
             onOpenRegister={() => openRegister('VISITANTE')}

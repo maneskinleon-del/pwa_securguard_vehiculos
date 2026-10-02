@@ -27,10 +27,15 @@ import { getLocalDateISO } from '../utils/datetime';
 // --- Helper fixtures ---
 
 const TODAY = getLocalDateISO();
+// OJO: no usar toISOString() aquí. Es UTC, y en horario de verano de Chile
+// (UTC-3) a partir de las 21:00 locales "ayer" calculado por UTC cae en el
+// mismo día local → el fixture dejaría de ser "ayer" y los tests contarían
+// un log de más. getLocalDateISO() es exactamente el helper creado para
+// evitar esa trampa (ver utils/datetime.ts).
 const YESTERDAY = (() => {
   const d = new Date();
   d.setDate(d.getDate() - 1);
-  return d.toISOString().split('T')[0];
+  return getLocalDateISO(d);
 })();
 
 const makeEntry = (overrides: Partial<LogItem> = {}): LogItem => ({

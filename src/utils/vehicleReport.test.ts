@@ -194,4 +194,101 @@ describe("buildVehicleReportCSV", () => {
     expect(csv).toContain("Punto de Control:,Obra Norte");
     expect(csv).toContain("Total de Sesiones Vehiculares:,1");
   });
+
+  // --- L) CSV existente sigue consolidando Entrada + Salida en UNA fila ---
+  it("L) consolida Entrada + Salida en una única fila por sesión (entryId)", () => {
+    logs = [
+      makeExit("exit-1", "entry-1", "BYJT99", "13:51", 1000),
+      makeEntry("entry-1", "BYJT99", "13:31", "Reparto de agua para domatic", 1000),
+    ];
+    const csv = buildVehicleReportCSV({ logs, activeInside: [], profile });
+    const rows = csv.split("\r\n").filter(l => l.includes("BYJT"));
+    expect(rows).toHaveLength(1); // 1 fila, NO 2
+    const cells = rows[0].split(",");
+    expect(cells).toHaveLength(9); // 7 originales + Tipo de Salida + Observación
+    expect(cells[0]).toBe(getLocalDateISO());          // Fecha
+    expect(cells[1]).toBe("13:31");                    // Hora Entrada
+    expect(cells[2]).toBe("13:51");                    // Hora Salida
+    expect(cells[3]).toBe("Reparto de agua para domatic"); // Empresa
+    expect(cells[4]).toBe("BYJT-99");                  // Patente
+    expect(cells[5]).toBe("FUERA");                    // Estado
+    expect(cells[6]).toBe("20m");                      // Permanencia
+  });
+
+  // --- Ampliación mínima: columnas nuevas + salida normal marcada ---
+  it("añade 'Tipo de Salida' y 'Observación' sin alterar las 7 columnas originales", () => {
+    logs = [
+      makeExit("exit-1", "entry-1", "BYJT99", "13:51", 1000),
+      makeEntry("entry-1", "BYJT99", "13:31", "Empresa X", 1000),
+    ];
+    const csv = buildVehicleReportCSV({ logs, activeInside: [], profile });
+    const header = csv.split("\r\n").find(l => l.startsWith("Fecha,"));
+    expect(header).toBe(
+      "Fecha,Hora Entrada,Hora Salida,Empresa,Patente,Estado,Permanencia,Tipo de Salida,Observación"
+    );
+    const row = csv.split("\r\n").filter(l => l.includes("BYJT"))[0];
+    expect(row.split(",")[7]).toBe("Salida normal"); // Tipo de Salida
+    expect(row.split(",")[8]).toBe("—");             // Observación (sin observación)
+  });
+
+  // --- SALIDA DIRECTA: fila propia, sin hora de entrada inventada ---
+  it("SALIDA DIRECTA se exporta como fila propia con entrada '—' y tipo 'Salida directa'", () => {
+    const directExit: LogItem = {
+      id: "exit-direct-1",
+      name: "Sacyr",
+      rut: "",
+      plate: "ABCD12",
+      type: "VEHICULO",
+      unit: "Empresa: Sacyr",
+      action: "Salida",
+      time: "16:40",
+      date: getLocalDateISO(),
+      status: "exited",
+      avatar: "",
+      directExit: true,
+      exitType: "Vacío",
+      observation: "Entrada registrada en otra portería",
+    };
+    logs = [directExit];
+
+    const csv = buildVehicleReportCSV({ logs, activeInside: [], profile });
+    const rows = csv.split("\r\n").filter(l => l.includes("ABCD"));
+    expect(rows).toHaveLength(1);
+
+    const cells = rows[0].split(",");
+    expect(cells[0]).toBe(getLocalDateISO());        // Fecha
+    expect(cells[1]).toBe("—");                      // Hora Entrada: NUNCA inventada
+    expect(cells[2]).toBe("16:40");                  // Hora Salida
+    expect(cells[3]).toBe("Sacyr");                  // Empresa
+    expect(cells[4]).toBe("ABCD-12");                // Patente
+    expect(cells[5]).toBe("FUERA");                  // Estado
+    expect(cells[6]).toBe("—");                      // Permanencia
+    expect(cells[7]).toBe("Salida directa");         // Tipo de Salida
+    expect(cells[8]).toBe("Entrada registrada en otra portería"); // Observación
+  });
+
+  it("SALIDA DIRECTA no crea una fila de entrada ficticia", () => {
+    logs = [{
+      id: "exit-direct-1", name: "Vehículo", rut: "", plate: "ABCD12", type: "VEHICULO",
+      unit: "Salida sin entrada local", action: "Salida", time: "16:40",
+      date: getLocalDateISO(), status: "exited", avatar: "", directExit: true,
+    }];
+    const csv = buildVehicleReportCSV({ logs, activeInside: [], profile });
+    // Solo una fila con ABCD (la de la salida directa), ninguna Entrada implícita
+    expect(csv.split("\r\n").filter(l => l.includes("ABCD"))).toHaveLength(1);
+    expect(csv).toContain("Salidas Directas (sin entrada local):,1");
+  });
+
+  it("la observación de una salida normal se exporta en su fila consolidada", () => {
+    const exit = makeExit("exit-1", "entry-1", "BYJT99", "13:51", 1000);
+    exit.observation = "No entrega nombre del conductor";
+    exit.exitType = "Con carga / materiales";
+    logs = [exit, makeEntry("entry-1", "BYJT99", "13:31", "Sacyr", 1000)];
+
+    const csv = buildVehicleReportCSV({ logs, activeInside: [], profile });
+    const cells = csv.split("\r\n").filter(l => l.includes("BYJT"))[0].split(",");
+    expect(cells[7]).toBe("Con carga / materiales");
+    expect(cells[8]).toBe("No entrega nombre del conductor");
+    expect(cells).toHaveLength(9); // sigue siendo una única fila
+  });
 });

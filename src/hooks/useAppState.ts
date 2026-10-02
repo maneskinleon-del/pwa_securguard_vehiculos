@@ -4,7 +4,19 @@
  */
 
 import { useEffect, useState, Dispatch, SetStateAction } from 'react';
-import { LogItem, IncidentReport, GuardProfile, AccessType, Persona, ActiveCheckIn } from '../types';
+import {
+  LogItem,
+  IncidentReport,
+  GuardProfile,
+  AccessType,
+  Persona,
+  ActiveCheckIn,
+  VehicleExitType,
+  VehicleEntryResult,
+  VehicleDirectExitResult,
+  VehicleExitOptions,
+  VEHICLE_EXIT_TYPES,
+} from '../types';
 import { INITIAL_LOGS, INITIAL_INCIDENTS, DEFAULT_GUARD } from '../data/mockData';
 import { getLocalDateISO } from '../utils/datetime';
 import { resolveMovementDeletion } from '../domain/access';
@@ -18,6 +30,12 @@ const isObj = (v: unknown): v is Record<string, any> => !!v && typeof v === 'obj
 const safeStr = (v: unknown, d = ''): string => (typeof v === 'string' ? v : d);
 const safeOptStr = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
 const safeNum = (v: unknown): number | undefined => (typeof v === 'number' && isFinite(v) ? v : undefined);
+
+// Validate a persisted exit type against the closed list (defensive rehydration).
+const safeExitType = (v: unknown): VehicleExitType | undefined =>
+  typeof v === 'string' && (VEHICLE_EXIT_TYPES as readonly string[]).includes(v)
+    ? (v as VehicleExitType)
+    : undefined;
 
 // Read an array from localStorage, returning null on missing/invalid/non-array JSON.
 const readArray = (key: string): any[] | null => {
@@ -50,6 +68,10 @@ const sanitizeLogs = (arr: any[]): LogItem[] =>
     duration: safeOptStr(l.duration),
     entryId: safeOptStr(l.entryId),
     entryTimestamp: safeNum(l.entryTimestamp),
+    // Trazabilidad de salida directa + metadatos de salida (opcionales).
+    directExit: l.directExit === true ? true : undefined,
+    exitType: safeExitType(l.exitType),
+    observation: safeOptStr(l.observation),
   }));
 
 const sanitizeActive = (arr: any[]): ActiveCheckIn[] =>
@@ -116,7 +138,7 @@ export interface AppState {
   personas: Persona[];
   setProfile: Dispatch<SetStateAction<GuardProfile>>;
   // Actions
-  handleMarkExit: (idOrRut: string, customExitTime?: string) => void;
+  handleMarkExit: (idOrRut: string, customExitTime?: string, meta?: VehicleExitOptions) => void;
   handleSaveRegister: (newEntry: Omit<LogItem, 'id' | 'time' | 'date' | 'status'>, addToPersonas?: boolean) => void;
   handleSaveIncident: (newIncident: Omit<IncidentReport, 'id' | 'time' | 'date' | 'reporter' | 'gate'>) => void;
   handleImportedPersonas: (incoming: Persona[]) => void;
@@ -134,8 +156,12 @@ export interface AppState {
   isVehicleInside: (plate: string) => boolean;
   findVehicleSession: (plate: string) => ActiveCheckIn | undefined;
   normPlate: (input?: string | null) => string;
-  handleVehicleEntry: (plate: string, company?: string) => LogItem | null;
-  handleVehicleExit: (plate: string, company?: string) => boolean;
+  /** ENTRADA: devuelve MATCH (`already_inside`) si la patente ya está dentro; no crea otra entrada. */
+  handleVehicleEntry: (plate: string, company?: string) => VehicleEntryResult;
+  /** SALIDA normal: cierra la sesión abierta. `false` si el vehículo no está dentro. */
+  handleVehicleExit: (plate: string, options?: VehicleExitOptions) => boolean;
+  /** SALIDA DIRECTA: registra la salida sin entrada local; no inventa hora de entrada. */
+  handleVehicleDirectExit: (plate: string, options?: VehicleExitOptions) => VehicleDirectExitResult;
 }
 
 /**
@@ -207,7 +233,7 @@ export const useAppState = (): AppState => {
   }, [personas]);
 
   // System Core actions
-  const handleMarkExit = (idOrRut: string, customExitTime?: string) => {
+  const handleMarkExit = (idOrRut: string, customExitTime?: string, meta?: VehicleExitOptions) => {
     const timestamp = customExitTime || new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
 
     // Find in activeInside (RUT comparison is null-safe via normRut)
@@ -264,6 +290,9 @@ export const useAppState = (): AppState => {
       avatar: session.avatar || '',
       entryId: session.id, // Link to original entry for session pairing
       entryTimestamp: session.entryTimestamp, // Original entry time for reference
+      // Metadatos de salida vehicular (opcionales, no afectan sesiones de personas)
+      exitType: meta?.exitType,
+      observation: meta?.observation,
     };
 
     setLogs(prev => [exitLog, ...prev]);
@@ -549,6 +578,14 @@ export const useAppState = (): AppState => {
   // Los vehículos se identifican por patente canónica, no por RUT. Reutilizan
   // la misma infraestructura de persistencia (logs + activeInside + localStorage
   // sincronizado) pero con lógica de emparejamiento por patente.
+  //
+  // Reglas de sesión vehicular (única fuente de verdad = `activeInside`):
+  //   - ENTRADA con sesión abierta  → BLOQUEADA (MATCH con la sesión existente).
+  //   - ENTRADA sin sesión abierta  → nueva sesión abierta.
+  //   - ENTRADA tras SALIDA         → permitida (sesiones históricas distintas).
+  //   - SALIDA con sesión abierta   → cierra esa sesión (salida normal).
+  //   - SALIDA sin sesión abierta   → SALIDA DIRECTA (no inventa entrada local).
+  //   - SALIDA DIRECTA tras ENTRADA → bloqueada (corresponde SALIDA normal).
 
   /** Normaliza RUT y patente para comparaciones seguras. */
   const normPlate = (v?: string | null): string => normalizePlate(v);
@@ -574,10 +611,14 @@ export const useAppState = (): AppState => {
     /**
    * Registro rápido de ENTRADA de vehículo por patente.
    *
-   * Semántica de duplicados (CASO 3): si el vehículo ya está dentro, se
-   * cierra su sesión anterior (Salida) antes de abrir una nueva (Entrada),
-   * reutilizando exactamente la regla que `handleSaveRegister` aplica para
-   * personas. Así el historial queda consistente: Entrada → Salida → Entrada.
+   * Semántica de duplicados (corregida): si la patente YA tiene una sesión
+   * abierta, la entrada se BLOQUEA y se devuelve un MATCH con esa sesión
+   * (`{ ok: false, reason: 'already_inside', session }`). No se escribe nada en
+   * `logs` ni en `activeInside`: nunca puede quedar más de una sesión abierta
+   * por patente y no se genera un cierre de sesión fantasma.
+   *
+   * Una misma patente SÍ puede volver a entrar después de haber salido:
+   * Entrada → Salida → Entrada produce dos sesiones históricas distintas.
    *
    * El `company` (empresa) es opcional. Se almacena en el campo `name` del
    * LogItem/ActiveCheckIn, de modo que la misma infraestructura de display
@@ -587,17 +628,20 @@ export const useAppState = (): AppState => {
    * Reutiliza los efectos de localStorage de useAppState: al modificar
    * `logs` y `activeInside` se persiste automáticamente.
    */
-  const handleVehicleEntry = (plateInput: string, company?: string): LogItem | null => {
+  const handleVehicleEntry = (plateInput: string, company?: string): VehicleEntryResult => {
     const plate = normPlate(plateInput);
     if (!isValidPlate(plate)) {
       console.error('[handleVehicleEntry] Patente inválida:', plateInput);
-      return null;
+      return { ok: false, reason: 'invalid_plate' };
     }
 
-    // Si ya está dentro, cerramos la sesión previa (duplicado de entrada)
+    // MATCH: la patente ya tiene una sesión ABIERTA → bloquear la nueva entrada.
+    // La detección se hace contra la sesión abierta (activeInside), no contra
+    // el histórico de logs, para no confundir sesiones ya cerradas.
     const existing = findVehicleSession(plate);
     if (existing) {
-      handleMarkExit(existing.id);
+      console.warn('[handleVehicleEntry] Vehículo ya está dentro (entrada bloqueada):', plate);
+      return { ok: false, reason: 'already_inside', session: existing };
     }
 
     const timestamp = new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
@@ -647,17 +691,19 @@ export const useAppState = (): AppState => {
       } catch (_) { /* sandbox: ignorado */ }
     }
 
-    return entryLog;
+    return { ok: true, log: entryLog };
   };
 
   /**
-   * Registro rápido de SALIDA de vehículo por patente.
-   * Busca la sesión activa por patente canónica y la cierra.
-   * El `company` es opcional y no afecta la búsqueda (que se hace por patente).
+   * Registro rápido de SALIDA NORMAL de vehículo por patente.
+   * Busca la sesión abierta por patente canónica y la cierra.
    * Devuelve `true` si se procesó la salida, `false` si el vehículo
-   * no estaba dentro (caso: SALIDA sin ENTRADA previa).
+   * no estaba dentro (caso: SALIDA sin ENTRADA previa → usar SALIDA DIRECTA).
+   *
+   * `options.observation` / `options.exitType` se adjuntan a la Salida
+   * (observación operacional opcional; nunca bloquea la salida).
    */
-  const handleVehicleExit = (plateInput: string, _company?: string): boolean => {
+  const handleVehicleExit = (plateInput: string, options?: VehicleExitOptions): boolean => {
     const plate = normPlate(plateInput);
     if (!isValidPlate(plate)) {
       console.error('[handleVehicleExit] Patente inválida:', plateInput);
@@ -665,11 +711,71 @@ export const useAppState = (): AppState => {
     }
     const session = findVehicleSession(plate);
     if (!session) {
-      console.warn('[handleVehicleExit] Vehículo no está dentro:', plate);
+      console.warn('[handleVehicleExit] Vehículo no está dentro (usar SALIDA DIRECTA):', plate);
       return false;
     }
-    handleMarkExit(session.id);
+    handleMarkExit(session.id, undefined, {
+      exitType: options?.exitType,
+      observation: options?.observation,
+    });
     return true;
+  };
+
+  /**
+   * SALIDA DIRECTA: registra una salida SIN entrada correspondiente en esta
+   * portería (vehículo estacionado desde el turno anterior, entró por otra
+   * portería, o la entrada nunca se registró).
+   *
+   * Garantías:
+   *   - NO crea ninguna Entrada (ni log ni sesión activa).
+   *   - NO inventa hora de entrada: la Salida queda sin `entryId` y sin
+   *     `entryTimestamp`, marcada con `directExit: true` (trazabilidad).
+   *   - NO toca `activeInside`.
+   *   - Si la patente SÍ tiene sesión abierta devuelve `already_inside` sin
+   *     escribir nada: en ese caso corresponde una SALIDA normal.
+   */
+  const handleVehicleDirectExit = (
+    plateInput: string,
+    options?: VehicleExitOptions
+  ): VehicleDirectExitResult => {
+    const plate = normPlate(plateInput);
+    if (!isValidPlate(plate)) {
+      console.error('[handleVehicleDirectExit] Patente inválida:', plateInput);
+      return { ok: false, reason: 'invalid_plate' };
+    }
+
+    if (findVehicleSession(plate)) {
+      console.warn('[handleVehicleDirectExit] Vehículo está dentro: corresponde SALIDA normal:', plate);
+      return { ok: false, reason: 'already_inside' };
+    }
+
+    const timestamp = new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+    const datestamp = getLocalDateISO();
+    const company = options?.company?.trim();
+    const companyName = company ? company : 'Vehículo';
+
+    const exitLog: LogItem = {
+      id: `log-exit-${generateId()}`,
+      name: companyName,
+      rut: '',
+      plate,
+      type: 'VEHICULO',
+      unit: company ? `Empresa: ${companyName}` : 'Salida sin entrada local',
+      action: 'Salida',
+      time: timestamp,
+      date: datestamp,
+      status: 'exited',
+      avatar: '',
+      // Sin entryId / entryTimestamp a propósito: no existe entrada local.
+      directExit: true,
+      exitType: options?.exitType,
+      observation: options?.observation,
+    };
+
+    setLogs(prev => [exitLog, ...prev]);
+    // activeInside NO se toca: el vehículo nunca estuvo dentro en esta portería.
+
+    return { ok: true, log: exitLog };
   };
 
   return {
@@ -698,5 +804,6 @@ export const useAppState = (): AppState => {
     findVehicleSession,
     handleVehicleEntry,
     handleVehicleExit,
+    handleVehicleDirectExit,
   };
 };
