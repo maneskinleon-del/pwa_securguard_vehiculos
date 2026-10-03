@@ -4,58 +4,40 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Shield, Bell, Plus, Siren, Settings2, History, Users, MonitorSmartphone } from 'lucide-react';
-import { AccessType, Persona } from './types';
+import { Shield, Bell, Siren, MonitorSmartphone } from 'lucide-react';
 import { VehicleDashboard } from './components/VehicleDashboard';
-import { LogsTab } from './components/LogsTab';
-import { PersonasTab } from './components/PersonasTab';
 import { SettingsTab } from './components/SettingsTab';
-import { RegisterModal, IncidentModal, JsonImportModal, ShiftHandoverModal, EditPersonaModal } from './components/Modals';
 import { useAppState } from './hooks/useAppState';
+import { useVehicleCatalog } from './hooks/useVehicleCatalog';
 
 export default function App() {
-  // Navigation
-  const [currentTab, setCurrentTab] = useState<'control' | 'logs' | 'personas' | 'settings'>('control');
+  // Navegación: UNA SOLA vista principal de trabajo (Control de Acceso).
+  // 'settings' no es una tab operativa: se abre desde la campana del header.
+  const [currentTab, setCurrentTab] = useState<'control' | 'settings'>('control');
 
-  // Central app state + business logic (extracted to useAppState)
+  // Estado central + lógica de negocio vehicular (useAppState).
+  // Se consumen sólo los handlers vehiculares y de configuración: los de
+  // Personas/registro de personas ya no tienen superficie en esta variante.
   const {
     logs,
     activeInside,
     incidents,
     profile,
-    personas,
     setProfile,
-    handleMarkExit,
-    handleSaveRegister,
-    handleSaveIncident,
-    handleImportedPersonas,
-    handleQuickCheckIn,
     handleRemoveMovement,
     handleResetDay,
     handleExportBackup,
     handleFactoryReset,
     handleResolveIncident,
-    handleCompleteHandover,
-    handleUpdatePersona,
-    handleRemovePersona,
-    handleRestoreDefaults,
     isVehicleInside,
     handleVehicleEntry,
     handleVehicleExit,
     handleVehicleDirectExit,
   } = useAppState();
 
-  // Modal display toggles
-  const [isRegisterOpen, setIsRegisterOpen] = useState(false);
-  const [registerPreset, setRegisterPreset] = useState<AccessType>('VISITANTE');
-  const [isIncidentOpen, setIsIncidentOpen] = useState(false);
-  const [isImportOpen, setIsImportOpen] = useState(false);
-  const [isHandoverOpen, setIsHandoverOpen] = useState(false);
-  const [isEditPersonaOpen, setIsEditPersonaOpen] = useState(false);
-  const [editingPersona, setEditingPersona] = useState<Persona | null>(null);
-
-  // Panel de registro rápido de vehículos (toggle con el botón flotante de patente)
-  const [showVehiclePanel, setShowVehiclePanel] = useState(false);
+  // Catálogo mínimo de vehículos autorizados (PATENTE → EMPRESA → AUTORIZADO).
+  // Persistencia local; NO REGISTRADO es sólo informativo y nunca bloquea.
+  const { catalog } = useVehicleCatalog();
 
   // Emergency lockdown toggle (estado de UI, no persiste en profile)
   const [emergencyLock, setEmergencyLock] = useState<boolean>(() => {
@@ -98,11 +80,6 @@ export default function App() {
     const interval = setInterval(updateTime, 1000);
     return () => clearInterval(interval);
   }, []);
-
-  const openRegister = (preset?: AccessType) => {
-    setRegisterPreset(preset || 'VISITANTE');
-    setIsRegisterOpen(true);
-  };
 
   return (
     <div className="min-h-screen bg-[#020617] text-slate-100 pb-28 selection:bg-indigo-500/30 select-none font-sans overflow-x-hidden w-full">
@@ -151,55 +128,19 @@ export default function App() {
           <VehicleDashboard
             logs={logs}
             activeInside={activeInside}
-            personas={personas}
+            catalog={catalog}
             profile={profile}
             incidents={incidents}
             isVehicleInside={isVehicleInside}
             onVehicleEntry={handleVehicleEntry}
             onVehicleExit={handleVehicleExit}
             onVehicleDirectExit={handleVehicleDirectExit}
-            onMarkExit={handleMarkExit}
             onRemoveMovement={handleRemoveMovement}
-            onOpenRegister={() => openRegister('VISITANTE')}
             onResetDay={handleResetDay}
             onExportBackup={handleExportBackup}
             clock={clock}
             onShowToast={(t) => setToast(t)}
-            onOpenPersonas={() => setCurrentTab('personas')}
             onOpenSettings={() => setCurrentTab('settings')}
-          />
-        )}
-
-        {currentTab === 'logs' && (
-          <LogsTab
-            logs={logs}
-            activeInside={activeInside}
-            personas={personas}
-            onQuickCheckIn={handleQuickCheckIn}
-            onMarkExit={handleMarkExit}
-            onOpenRegister={(preset) => openRegister(preset)}
-            onOpenIncident={() => setIsIncidentOpen(true)}
-            onOpenHandover={() => setIsHandoverOpen(true)}
-            onEditPersona={(persona) => { setEditingPersona(persona); setIsEditPersonaOpen(true); }}
-            emergencyLock={emergencyLock}
-            onToggleLock={() => setEmergencyLock(!emergencyLock)}
-          />
-        )}
-
-        {currentTab === 'personas' && (
-          <PersonasTab
-            logs={logs}
-            activeInside={activeInside}
-            personas={personas}
-            profile={profile}
-            incidents={incidents}
-            onOpenImport={() => setIsImportOpen(true)}
-            onResetDay={handleResetDay}
-            onDeleteAll={handleFactoryReset}
-            onImportPersonas={handleImportedPersonas}
-            onRestoreDefaults={handleRestoreDefaults}
-            onEditPersona={(persona) => { setEditingPersona(persona); setIsEditPersonaOpen(true); }}
-            onRemovePersona={handleRemovePersona}
           />
         )}
 
@@ -216,107 +157,20 @@ export default function App() {
         )}
       </main>
 
-      {/* Bottom Floating Access check-in button (+) as shown in mockups */}
-      <button
-        onClick={() => openRegister('VISITANTE')}
-        className="fixed bottom-24 right-5 w-14 h-14 bg-gradient-to-tr from-indigo-500 via-purple-600 to-[#818cf8] text-white rounded-full shadow-2xl flex items-center justify-center hover:opacity-95 hover:scale-105 active:scale-95 transition-all z-40 cursor-pointer border border-indigo-400/30"
-        title="Registrar Acceso Rápido"
-      >
-        <Plus className="w-6 h-6 text-white" />
-      </button>
-
-      {/* Primary Navigation bottom navbar matching screen designs */}
+      {/* ÚNICA TAB PRINCIPAL: Control de Acceso vehicular.
+          No hay tab de Personas, ni de Logs, ni de registro de choferes. */}
       <nav className="fixed bottom-0 left-0 w-full z-40 bg-[#020617]/95 backdrop-blur-md shadow-[0px_-4px_30px_rgba(0,0,0,0.8)] rounded-t-[2rem] border-t border-slate-900 overflow-hidden pb-safe">
-        <div className="max-w-md mx-auto flex justify-between items-center px-4 sm:px-8 py-2.5 sm:py-3">
-
-          {/* Tab 1: Control bar */}
+        <div className="max-w-md mx-auto flex justify-center items-center px-4 sm:px-8 py-2.5 sm:py-3">
           <button
             onClick={() => setCurrentTab('control')}
-            className={`flex items-center justify-center p-2.5 sm:p-3 transition-all duration-250 cursor-pointer rounded-2xl ${
-              currentTab === 'control'
-                ? 'bg-slate-900 text-indigo-400 font-extrabold border border-indigo-950 scale-105 shadow-lg shadow-indigo-600/10'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
-            } flex-1 max-w-[64px] h-12`}
-            title="Control de Accesos"
+            className="flex items-center justify-center gap-2 px-6 py-2.5 rounded-2xl bg-slate-900 text-indigo-400 font-extrabold border border-indigo-950 shadow-lg shadow-indigo-600/10 active:scale-95 transition-all"
+            title="Control de Acceso Vehicular"
           >
             <MonitorSmartphone className="w-5 h-5 sm:w-6 sm:h-6" />
+            <span className="text-[10px] sm:text-xs uppercase tracking-widest">Control de Acceso</span>
           </button>
-
-          {/* Tab 2: Logs list */}
-          <button
-            onClick={() => setCurrentTab('logs')}
-            className={`flex items-center justify-center p-2.5 sm:p-3 transition-all duration-250 cursor-pointer rounded-2xl ${
-              currentTab === 'logs'
-                ? 'bg-slate-900 text-indigo-400 font-extrabold border border-indigo-950 scale-105 shadow-lg shadow-indigo-600/10'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
-            } flex-1 max-w-[64px] h-12`}
-            title="Consola de Pre-registros y Entradas"
-          >
-            <History className="w-5 h-5 sm:w-6 sm:h-6" />
-          </button>
-
-          {/* Tab 3: Personas database */}
-          <button
-            onClick={() => setCurrentTab('personas')}
-            className={`flex items-center justify-center p-2.5 sm:p-3 transition-all duration-250 cursor-pointer rounded-2xl ${
-              currentTab === 'personas'
-                ? 'bg-slate-900 text-indigo-400 font-extrabold border border-indigo-950 scale-105 shadow-lg shadow-indigo-600/10'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
-            } flex-1 max-w-[64px] h-12`}
-            title="Estadísticas de Personal y CCTV"
-          >
-            <Users className="w-5 h-5 sm:w-6 sm:h-6" />
-          </button>
-
-          {/* Tab 4: Settings config */}
-          <button
-            onClick={() => setCurrentTab('settings')}
-            className={`flex items-center justify-center p-2.5 sm:p-3 transition-all duration-250 cursor-pointer rounded-2xl ${
-              currentTab === 'settings'
-                ? 'bg-slate-900 text-indigo-400 font-extrabold border border-indigo-950 scale-105 shadow-lg shadow-indigo-600/10'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
-            } flex-1 max-w-[64px] h-12`}
-            title="Configuraciones de Consola"
-          >
-            <Settings2 className="w-5 h-5 sm:w-6 sm:h-6" />
-          </button>
-
         </div>
       </nav>
-
-      {/* Dialogue and Modals handlers */}
-      <RegisterModal
-        isOpen={isRegisterOpen}
-        onClose={() => setIsRegisterOpen(false)}
-        onSave={handleSaveRegister}
-        initialType={registerPreset}
-      />
-
-      <IncidentModal
-        isOpen={isIncidentOpen}
-        onClose={() => setIsIncidentOpen(false)}
-        onSave={handleSaveIncident}
-      />
-
-      <JsonImportModal
-        isOpen={isImportOpen}
-        onClose={() => setIsImportOpen(false)}
-        onImport={handleImportedPersonas}
-      />
-
-      <ShiftHandoverModal
-        isOpen={isHandoverOpen}
-        onClose={() => setIsHandoverOpen(false)}
-        onComplete={handleCompleteHandover}
-        currentGuard={profile.name}
-      />
-
-      <EditPersonaModal
-        isOpen={isEditPersonaOpen}
-        onClose={() => { setIsEditPersonaOpen(false); setEditingPersona(null); }}
-        onSave={handleUpdatePersona}
-        persona={editingPersona}
-      />
 
       {/* Floating System-wide Overlay Toast Notification */}
       {toast && (

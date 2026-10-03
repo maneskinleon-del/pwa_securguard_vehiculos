@@ -33,12 +33,19 @@ import {
   VEHICLE_EXIT_TYPES,
 } from '../types';
 import { normalizePlate, isValidPlate, formatPlateForDisplay } from '../domain/plate';
+import {
+  AuthorizedVehicle,
+  resolveAuthorization,
+  suggestCompanyFromCatalog,
+} from '../domain/vehicleCatalog';
 
 export type VehicleToastType = 'success' | 'alert' | 'info';
 
 export interface QuickVehicleRegisterProps {
   activeInside: ActiveCheckIn[];
   logs: LogItem[];
+  /** Catálogo de vehículos autorizados (PATENTE → EMPRESA). */
+  catalog: AuthorizedVehicle[];
   isVehicleInside: (plate: string) => boolean;
   onVehicleEntry: (plate: string, company?: string) => VehicleEntryResult;
   onVehicleExit: (plate: string, options?: VehicleExitOptions) => boolean;
@@ -49,6 +56,7 @@ export interface QuickVehicleRegisterProps {
 export function QuickVehicleRegister({
   activeInside,
   logs,
+  catalog,
   isVehicleInside,
   onVehicleEntry,
   onVehicleExit,
@@ -81,10 +89,20 @@ export function QuickVehicleRegister({
     return match ? match.name : '';
   };
 
-  // Cuando la patente cambia, sugerir empresa si no se ha ingresado una
+  // Cuando la patente cambia, autocompletar la empresa.
+  //
+  // Prioridad: CATÁLOGO (fuente de verdad) → historial de movimientos.
+  // Si la patente está registrada, la empresa aparece automáticamente para
+  // que el guardia no tenga que escribirla. Si NO está registrada, se mantiene
+  // el valor operativo que ya permite escribir el usuario (no se rompe nada).
   const handlePlateBlur = () => {
     const normalized = normalizePlate(plateInput);
     if (normalized && !companyInput) {
+      const fromCatalog = suggestCompanyFromCatalog(catalog, normalized);
+      if (fromCatalog) {
+        setCompanyInput(fromCatalog);
+        return;
+      }
       const suggestion = suggestCompany(normalized);
       if (suggestion) setCompanyInput(suggestion);
     }
@@ -103,6 +121,10 @@ export function QuickVehicleRegister({
   const inputValid = isValidPlate(canonicalInput);
   const currentPlate = inputValid ? canonicalInput : '';
   const inside = currentPlate ? isVehicleInside(currentPlate) : false;
+
+  // Estado de autorización de la patente tipeada frente al catálogo.
+  // Sólo es INFORMATIVO: NO REGISTRADO nunca bloquea el movimiento.
+  const authorization = resolveAuthorization(catalog, canonicalInput);
 
   // Último movimiento de una patente en el historial (logs: nuevo→viejo)
   const getLastMovement = (plate: string): LogItem | null => {
@@ -287,7 +309,48 @@ export function QuickVehicleRegister({
         )}
       </div>
 
-      {/* EMPRESA input (optional) */ }
+      {/* ESTADO DE AUTORIZACIÓN (informativo; NO REGISTRADO no bloquea) */}
+      {inputValid && (
+        <div
+          data-testid="vehicle-auth-status"
+          className={`flex items-center justify-between gap-3 p-3 rounded-2xl border font-mono transition-all ${
+            authorization.registered
+              ? 'bg-emerald-500/10 border-emerald-500/30'
+              : 'bg-slate-900/40 border-amber-500/30'
+          }`}
+        >
+          <div className="min-w-0">
+            <div className="text-[9px] uppercase tracking-widest text-slate-500 font-black">
+              Patente
+            </div>
+            <div className="text-xs font-bold text-white truncate">
+              {authorization.displayPlate}
+            </div>
+          </div>
+
+          <div className="min-w-0 text-right">
+            <div className="text-[9px] uppercase tracking-widest text-slate-500 font-black">
+              Empresa
+            </div>
+            <div className="text-xs font-bold text-slate-200 truncate">
+              {authorization.company || '—'}
+            </div>
+          </div>
+
+          <span
+            data-testid="vehicle-auth-badge"
+            className={`flex-shrink-0 px-2 py-1 rounded-lg text-[9px] font-black tracking-widest uppercase ${
+              authorization.registered
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+            }`}
+          >
+            {authorization.status}
+          </span>
+        </div>
+      )}
+
+      {/* EMPRESA input (opcional) */ }
       <div className="relative">
         <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 block flex items-center gap-1">
           <Building className="w-3 h-3" />

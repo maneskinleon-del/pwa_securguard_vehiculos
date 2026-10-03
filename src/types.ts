@@ -95,20 +95,6 @@ export interface Persona {
   avatar?: string;
 }
 
-/**
- * Chofer: conductor de camión/vehículo de carga.
- * Cada chofer puede tener una patente asignada, pero puede cambiarse de camión.
- * active=false indica que el chofer ya no trabaja aquí.
- */
-export interface Chofer {
-  id: string;
-  name: string;
-  rut: string;
-  plate: string; // patente asociada (puede cambiar)
-  unit: string;  // unidad/destino habitual
-  active: boolean; // false = chofer inactivo (ya no trabaja)
-  avatar?: string;
-}
 // --- Vehicle quick-register contracts (portería) ---
 
 /**

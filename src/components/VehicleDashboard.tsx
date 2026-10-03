@@ -4,40 +4,46 @@
  */
 
 /**
- * VehicleDashboard
+ * VehicleDashboard — pantalla ÚNICA de CONTROL DE ACCESO vehicular.
  *
- * Pantalla principal para el control de acceso vehicular en una obra.
- * Reemplaza al ControlTab de la PWA maestra como la vista principal cuando el
- * enfoque es 100% vehicular.
+ * Esta variante es exclusivamente vehicular: no hay personas, ni choferes,
+ * ni RUT de persona, ni fotografía, ni navegación dedicada a Personas.
  *
- * Prioriza la experiencia de registro rápido:
- *   1. QuickVehicleRegister (patente + empresa → ENTRADA/SALIDA)
- *   2. Vehículos actualmente DENTRO (lista compacta con hora de entrada)
- *   3. Últimos movimientos (histórico compacto)
+ * Estructura (las tres secciones viven dentro de Control de Acceso):
+ *   1. QuickVehicleRegister — PATENTE → EMPRESA → estado de autorización →
+ *      ENTRADA / SALIDA / SALIDA DIRECTA + tipo de salida + observación.
+ *   2. Vehículos Dentro — sólo los vehículos actualmente dentro.
+ *   3. Últimos Movimientos — lista CORTA y acotada (no una bitácora infinita).
+ *
+ * El historial COMPLETO sigue disponible para la lógica de reportes/exportación
+ * (utils/vehicleReport.ts, botón CSV), pero no domina la UI.
+ *
+ * El catálogo de vehículos autorizados (`catalog`) sólo INFORMA
+ * AUTORIZADO / NO REGISTRADO: nunca bloquea un movimiento.
  *
  * Reutiliza:
  *   - useAppState (logs, activeInside, persistencia, exportación)
  *   - domain/plate.ts (normalización y validación)
- *   - utils/report.ts (exportación CSV)
- *
- * Las funciones de gestión de personas se mantienen accesibles pero dejan de
- * ser el foco de la pantalla.
+ *   - domain/vehicleCatalog.ts (consulta del catálogo)
+ *   - utils/vehicleReport.ts (exportación CSV)
  */
 
-import React, { useMemo, useState } from 'react';
-import { ActiveCheckIn, LogItem, AccessType, VehicleEntryResult, VehicleDirectExitResult, VehicleExitOptions } from '../types';
+import React, { useMemo } from 'react';
+import { ActiveCheckIn, LogItem, VehicleEntryResult, VehicleDirectExitResult, VehicleExitOptions } from '../types';
 import { QuickVehicleRegister, VehicleToastType } from './QuickVehicleRegister';
-import { Car, Download, History, Users, Settings, LogOut, Clock, Building2 } from 'lucide-react';
-import { normalizePlate, formatPlateForDisplay } from '../domain/plate';
+import { Car, Download, History, Settings, LogOut, Clock, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { formatPlateForDisplay } from '../domain/plate';
+import { AuthorizedVehicle, resolveAuthorization } from '../domain/vehicleCatalog';
 import { buildVehicleReportCSV, downloadVehicleReportCSV } from '../utils/vehicleReport';
 import { getLocalDateISO } from '../utils/datetime';
-import { GuardProfile, IncidentReport, Persona } from '../types';
+import { GuardProfile, IncidentReport } from '../types';
 
 export interface VehicleDashboardProps {
   // State
   logs: LogItem[];
   activeInside: ActiveCheckIn[];
-  personas: Persona[];
+  /** Catálogo de vehículos autorizados (PATENTE → EMPRESA → AUTORIZADO). */
+  catalog: AuthorizedVehicle[];
   profile: GuardProfile;
   incidents: IncidentReport[];
   // Vehicle handlers
@@ -45,41 +51,37 @@ export interface VehicleDashboardProps {
   onVehicleEntry: (plate: string, company?: string) => VehicleEntryResult;
   onVehicleExit: (plate: string, options?: VehicleExitOptions) => boolean;
   onVehicleDirectExit: (plate: string, options?: VehicleExitOptions) => VehicleDirectExitResult;
-  // Reused from master
-  onMarkExit: (id: string) => void;
+  // Movements
   onRemoveMovement: (id: string) => void;
-  onOpenRegister: (preset?: AccessType) => void;
   onResetDay?: () => void;
   onDeleteAll?: () => void;
   onExportBackup?: () => void;
   clock: string;
   onShowToast: (toast: { message: string; type: VehicleToastType }) => void;
-  onOpenPersonas?: () => void;
   onOpenSettings?: () => void;
 }
 
 export function VehicleDashboard({
   logs,
   activeInside,
-  personas,
+  catalog,
   profile,
   incidents,
   isVehicleInside,
   onVehicleEntry,
   onVehicleExit,
   onVehicleDirectExit,
-  onMarkExit,
   onRemoveMovement,
-  onOpenRegister,
   onResetDay,
   onDeleteAll,
   onExportBackup,
   clock,
   onShowToast,
-  onOpenPersonas,
   onOpenSettings,
 }: VehicleDashboardProps) {
-  const [movementLimit] = useState(15);
+  // Últimos movimientos: lista CORTA y acotada. No es una bitácora infinita;
+  // el historial completo sigue disponible para el CSV de reportes.
+  const RECENT_MOVEMENTS_LIMIT = 8;
 
   // Filtrar vehículos activos (rut === '', type VEHICULO)
   const vehiclesInside = useMemo(() => {
@@ -90,8 +92,8 @@ export function VehicleDashboard({
   const recentVehicleMovements = useMemo(() => {
     return logs
       .filter(l => l.plate && l.plate !== '' && l.type === 'VEHICULO')
-      .slice(0, movementLimit);
-  }, [logs, movementLimit]);
+      .slice(0, RECENT_MOVEMENTS_LIMIT);
+  }, [logs]);
 
   const handleExportCSV = () => {
     try {
@@ -120,6 +122,7 @@ export function VehicleDashboard({
         <QuickVehicleRegister
           activeInside={activeInside}
           logs={logs}
+          catalog={catalog}
           isVehicleInside={isVehicleInside}
           onVehicleEntry={onVehicleEntry}
           onVehicleExit={onVehicleExit}
@@ -156,11 +159,18 @@ export function VehicleDashboard({
                     <Car className="w-4 h-4 text-indigo-400" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="font-mono text-sm font-bold text-white">
-                      {formatPlateForDisplay(v.plate || '')}
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm font-bold text-white">
+                        {formatPlateForDisplay(v.plate || '')}
+                      </span>
+                      {resolveAuthorization(catalog, v.plate).registered ? (
+                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" aria-label="AUTORIZADO" />
+                      ) : (
+                        <ShieldAlert className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" aria-label="NO REGISTRADO" />
+                      )}
                     </div>
                     <div className="text-[10px] text-slate-500 truncate max-w-[160px]">
-                      {v.name !== 'Vehículo' ? v.name : '— Sin empresa'}
+                      {v.name !== 'Vehículo' ? v.name : '—'}
                     </div>
                   </div>
                 </div>
@@ -229,9 +239,16 @@ export function VehicleDashboard({
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   <div className={`w-1.5 h-4 rounded-full ${log.action === 'Entrada' ? 'bg-emerald-400' : 'bg-rose-400'}`}></div>
                   <div className="min-w-0 flex-1">
-                    <span className="font-mono text-xs font-bold text-white">
-                      {formatPlateForDisplay(log.plate || '')}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-xs font-bold text-white">
+                        {formatPlateForDisplay(log.plate || '')}
+                      </span>
+                      {resolveAuthorization(catalog, log.plate).registered ? (
+                        <ShieldCheck className="w-3 h-3 text-emerald-400 flex-shrink-0" aria-label="AUTORIZADO" />
+                      ) : (
+                        <ShieldAlert className="w-3 h-3 text-amber-400 flex-shrink-0" aria-label="NO REGISTRADO" />
+                      )}
+                    </div>
                     <div className="flex items-center gap-2 text-[8px] text-slate-500">
                       {log.directExit ? (
                         <span className="text-rose-300 font-bold uppercase">Salida directa</span>
@@ -280,16 +297,8 @@ export function VehicleDashboard({
         )}
       </section>
 
-      {/* Footer: navegación secundaria a funciones maestras */ }
+      {/* Footer: acceso a configuración (sin conceptos de Personas) */}
       <div className="flex items-center justify-center gap-4 pt-2 pb-safe">
-        <button
-          onClick={onOpenPersonas}
-          className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800 text-xs font-bold transition-all"
-          title="Gestión de personas"
-        >
-          <Users className="w-4 h-4" />
-          Personas
-        </button>
         <button
           onClick={onOpenSettings}
           className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800 text-xs font-bold transition-all"

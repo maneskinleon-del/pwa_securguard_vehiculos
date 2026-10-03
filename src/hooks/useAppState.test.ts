@@ -8,6 +8,7 @@ import { renderHook, act, cleanup } from '@testing-library/react';
 import { useAppState } from './useAppState';
 import { normalizePlate } from '../domain/plate';
 import { LogItem, VehicleEntryResult, VehicleDirectExitResult, VehicleExitOptions } from '../types';
+import { AuthorizedVehicle, resolveAuthorization } from '../domain/vehicleCatalog';
 
 // --- Helpers de resultado (la API devuelve uniones discriminadas) ---
 
@@ -465,6 +466,87 @@ describe('useAppState — Vehicle quick-register handlers', () => {
       expect(log!.exitType).toBe('Vacío');
       expect(log!.observation).toBe('Vino de otra portería');
       expect(reloaded.result.current.isVehicleInside('ABCD12')).toBe(false);
+    });
+  });
+// ==========================================================================
+  // CATÁLOGO DE VEHÍCULOS AUTORIZADOS — integración con la lógica validada
+  //
+  // Regla central: "NO REGISTRADO" es INFORMATIVO. NO bloquea el registro del
+  // movimiento ni altera la lógica de Entrada/Salida/Salida Directa.
+  // ==========================================================================
+  describe('Catálogo de vehículos autorizados — NO REGISTRADO no bloquea', () => {
+    beforeEach(() => {
+      seedEmptyStorage();
+      localStorage.removeItem('securguard_vehicle_catalog_v1');
+    });
+
+    it('una patente NO REGISTRADA (ZZZZ-99) registra la ENTRADA igualmente', () => {
+      const { result } = renderHook(() => useAppState());
+      const catalog: AuthorizedVehicle[] = [{ plate: 'WWCC80', company: 'Domatica' }];
+
+      // La patente NO existe en el catálogo…
+      expect(resolveAuthorization(catalog, 'ZZZZ99').status).toBe('NO REGISTRADO');
+
+      // …y aun así el movimiento se registra.
+      const log = entryLogOf(enterVehicle(result, 'ZZZZ-99', 'Empresa Operativa'));
+      expect(log.plate).toBe('ZZZZ99');
+      expect(log.action).toBe('Entrada');
+      expect(log.name).toBe('Empresa Operativa');
+    });
+
+    it('una patente NO REGISTRADA completa Entrada → Salida', () => {
+      const { result } = renderHook(() => useAppState());
+      enterVehicle(result, 'ZZZZ-99', 'Empresa Operativa');
+
+      let ok = false;
+      act(() => {
+        ok = result.current.handleVehicleExit('ZZZZ99');
+      });
+
+      expect(ok).toBe(true);
+      expect(result.current.isVehicleInside('ZZZZ99')).toBe(false);
+    });
+
+    it('una patente NO REGISTRADA puede registrar SALIDA DIRECTA', () => {
+      const { result } = renderHook(() => useAppState());
+      const log = directExitLogOf(directExit(result, 'ZZZZ-99'));
+      expect(log.directExit).toBe(true);
+      expect(log.plate).toBe('ZZZZ99');
+      // La salida directa sigue SIN inventar hora de entrada.
+      expect(log.entryId).toBeUndefined();
+      expect(log.entryTimestamp).toBeUndefined();
+    });
+
+    it('una patente AUTORIZADA con empresa del catálogo registra igual', () => {
+      const { result } = renderHook(() => useAppState());
+      const catalog: AuthorizedVehicle[] = [{ plate: 'WWCC80', company: 'Domatica' }];
+
+      const auth = resolveAuthorization(catalog, 'WWCC-80');
+      expect(auth.status).toBe('AUTORIZADO');
+
+      // La empresa del catálogo se usa como valor operativo de la entrada.
+      const log = entryLogOf(enterVehicle(result, auth.displayPlate.replace('-', ''), auth.company ?? undefined));
+      expect(log.name).toBe('Domatica');
+    });
+
+    it('el catálogo NO altera la lógica de entrada duplicada', () => {
+      const { result } = renderHook(() => useAppState());
+      enterVehicle(result, 'ZZZZ-99', 'Empresa Operativa');
+      const dup = enterVehicle(result, 'ZZZZ-99', 'Empresa Operativa');
+      expect(dup.ok).toBe(false);
+      expect(dup.ok === false && dup.reason).toBe('already_inside');
+    });
+
+    it('el catálogo NO altera la observación ni el tipo de salida', () => {
+      const { result } = renderHook(() => useAppState());
+      const log = directExitLogOf(
+        directExit(result, 'ZZZZ-99', {
+          exitType: 'Carga parcial',
+          observation: 'Vehículo se niega a entregar nombre del conductor',
+        })
+      );
+      expect(log.exitType).toBe('Carga parcial');
+      expect(log.observation).toBe('Vehículo se niega a entregar nombre del conductor');
     });
   });
 });

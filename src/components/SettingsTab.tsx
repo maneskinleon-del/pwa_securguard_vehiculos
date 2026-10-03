@@ -190,7 +190,7 @@ export function SettingsTab({ profile, onChangeProfile, incidents, onResolveInci
               1. Cierre de Jornada / Reiniciar Día
             </h3>
             <p className="text-[11px] text-slate-400 leading-normal">
-              Borra únicamente los eventos del día operacionales (Entradas, Salidas, Eventos de Hoy, y Estado de Presencia Temporal). <strong className="text-emerald-400">NO eliminará</strong> la base maestra de personas, contratistas, residentes ni visitas pre-registradas.
+              Borra únicamente los eventos del día operacionales (Entradas, Salidas, Eventos de Hoy, y Estado de Presencia Temporal). <strong className="text-emerald-400">NO eliminará</strong> el catálogo de vehículos autorizados.
             </p>
           </div>
 
@@ -224,7 +224,7 @@ export function SettingsTab({ profile, onChangeProfile, incidents, onResolveInci
                   className="px-4 py-2 bg-emerald-600/10 hover:bg-emerald-600 text-emerald-400 hover:text-white font-extrabold text-[11px] uppercase rounded-xl border border-emerald-500/20 hover:border-transparent transition-all cursor-pointer flex items-center gap-1.5"
                 >
                   <CalendarDays className="w-3.5 h-3.5" />
-                  Reiniciar Día (Conserva Personas)
+                  Reiniciar Día (Conserva Catálogo)
                 </button>
                 <span className="text-[9px] text-[#818cf8] font-bold uppercase tracking-widest bg-indigo-950/20 border border-indigo-500/10 px-2.5 py-0.5 rounded-full font-sans">
                   Offline-Safe Local Storage
@@ -239,10 +239,10 @@ export function SettingsTab({ profile, onChangeProfile, incidents, onResolveInci
           <div>
             <h3 className="text-xs font-bold text-rose-450 uppercase tracking-wider flex items-center gap-2 mb-2">
               <Trash2 className="w-4 h-4 text-rose-500" />
-              2. Eliminar Toda la Bitácora y Choferes (Reinicio de Fábrica)
+              2. Eliminar Toda la Bitácora y el Catálogo de Vehículos (Reinicio de Fábrica)
             </h3>
             <p className="text-[11px] text-slate-400 leading-normal">
-              Borra <strong className="text-rose-400">toda la información</strong> local de manera permanente, incluyendo todos los pre-registros, base maestra de personas, contratistas, residentes de hoy, historial y el <strong className="text-rose-400">catálogo completo de choferes</strong>.
+              Borra <strong className="text-rose-400">toda la información</strong> local de manera permanente, incluyendo todo el historial de movimientos vehiculares y el <strong className="text-rose-400">catálogo de vehículos autorizados</strong>.
             </p>
           </div>
 
@@ -276,7 +276,7 @@ export function SettingsTab({ profile, onChangeProfile, incidents, onResolveInci
                   className="px-4 py-2 bg-red-650/10 hover:bg-rose-600 text-rose-400 hover:text-white font-extrabold text-[11px] uppercase rounded-xl border border-red-500/20 hover:border-transparent transition-all cursor-pointer flex items-center gap-1.5"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
-                  Eliminar Todo el Historial, Personas & Choferes
+                  Eliminar Todo el Historial y Catálogo
                 </button>
                 <span className="text-[9px] text-rose-400 font-bold uppercase tracking-widest bg-rose-950/15 border border-rose-500/10 px-2.5 py-0.5 rounded-full font-sans">
                   Borrado Completo
@@ -295,7 +295,7 @@ export function SettingsTab({ profile, onChangeProfile, incidents, onResolveInci
           Respaldo y Portabilidad
         </h3>
         <p className="text-[11px] text-slate-400 leading-normal">
-          Exporta todos los datos (registros, personas, incidencias, perfil) a un archivo <strong className="text-indigo-300">.json</strong>. Guárdalo como respaldo o para moverlo a otro dispositivo. El almacenamiento local se pierde al cambiar de teléfono o borrar caché.
+          Exporta todos los datos (registros vehiculares, incidencias, perfil) a un archivo <strong className="text-indigo-300">.json</strong>. Guárdalo como respaldo o para moverlo a otro dispositivo. El almacenamiento local se pierde al cambiar de teléfono o borrar caché.
         </p>
         <button
           type="button"
