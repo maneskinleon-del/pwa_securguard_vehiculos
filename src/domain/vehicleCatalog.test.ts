@@ -111,25 +111,43 @@ describe('vehicleCatalog — normalización de patente', () => {
   });
 });
 
-describe('vehicleCatalog — semilla inicial', () => {
-  it('incluye WWCC-80 → Domatica', () => {
+describe('vehicleCatalog — semilla inicial (catálogo vacío a propósito)', () => {
+  // La semilla está VACÍA: el catálogo se carga 100% vía CSV
+  // (pantalla IMPORTAR PATENTES). Estos tests fijan ese comportamiento.
+  it('la semilla inicial está vacía', () => {
+    expect(INITIAL_AUTHORIZED_VEHICLES).toEqual([]);
+  });
+
+  it('con la semilla vacía, WWCC-80 es NO REGISTRADO hasta importarlo', () => {
     const r = resolveAuthorization(INITIAL_AUTHORIZED_VEHICLES, 'WWCC-80');
+    expect(r.status).toBe('NO REGISTRADO');
+    expect(r.company).toBeNull();
+  });
+
+  it('con la semilla vacía, HHCC-29 es NO REGISTRADO hasta importarlo', () => {
+    expect(resolveAuthorization(INITIAL_AUTHORIZED_VEHICLES, 'HHCC-29').status).toBe('NO REGISTRADO');
+  });
+
+  it('con la semilla vacía, ZZZZ-99 es NO REGISTRADO', () => {
+    expect(resolveAuthorization(INITIAL_AUTHORIZED_VEHICLES, 'ZZZZ-99').status).toBe('NO REGISTRADO');
+  });
+
+  it('con la semilla vacía TODAS las patentes son NO REGISTRADO', () => {
+    for (const p of ['WWCC-80', 'ABCD-12', 'TSXD-99', 'ZZZZ-99']) {
+      expect(resolveAuthorization(INITIAL_AUTHORIZED_VEHICLES, p).status).toBe('NO REGISTRADO');
+    }
+  });
+
+  it('WWCC-80 → Domatica funciona igual con un catálogo explícito', () => {
+    const imported: AuthorizedVehicle[] = [{ plate: 'WWCC80', company: 'Domatica' }];
+    const r = resolveAuthorization(imported, 'WWCC-80');
     expect(r.status).toBe('AUTORIZADO');
     expect(r.company).toBe('Domatica');
   });
 
-  it('incluye HHCC-29 → Sacyr', () => {
-    const r = resolveAuthorization(INITIAL_AUTHORIZED_VEHICLES, 'HHCC-29');
-    expect(r.status).toBe('AUTORIZADO');
-    expect(r.company).toBe('Sacyr');
-  });
-
-  it('no incluye ZZZZ-99 (ejemplo de NO REGISTRADO)', () => {
-    expect(resolveAuthorization(INITIAL_AUTHORIZED_VEHICLES, 'ZZZZ-99').status).toBe('NO REGISTRADO');
-  });
-
-  it('guarda las patentes de la semilla en forma canónica', () => {
-    for (const v of INITIAL_AUTHORIZED_VEHICLES) {
+  it('guarda las patentes del catálogo en forma canónica', () => {
+    const imported: AuthorizedVehicle[] = [{ plate: 'WWCC80', company: 'Domatica' }];
+    for (const v of [...INITIAL_AUTHORIZED_VEHICLES, ...imported]) {
       expect(v.plate).toBe(v.plate.toUpperCase().replace(/[^A-Z0-9]/g, ''));
     }
   });

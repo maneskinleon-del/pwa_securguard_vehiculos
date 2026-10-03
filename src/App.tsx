@@ -4,16 +4,18 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Shield, Bell, Siren, MonitorSmartphone } from 'lucide-react';
+import { Shield, Bell, Siren, MonitorSmartphone, Upload } from 'lucide-react';
 import { VehicleDashboard } from './components/VehicleDashboard';
+import { ImportPatentes } from './components/ImportPatentes';
 import { SettingsTab } from './components/SettingsTab';
 import { useAppState } from './hooks/useAppState';
 import { useVehicleCatalog } from './hooks/useVehicleCatalog';
 
 export default function App() {
   // Navegación: UNA SOLA vista principal de trabajo (Control de Acceso).
-  // 'settings' no es una tab operativa: se abre desde la campana del header.
-  const [currentTab, setCurrentTab] = useState<'control' | 'settings'>('control');
+  // 'settings' e 'import' no son tabs operativas: son secciones
+  // administrativas que se abren desde el header.
+  const [currentTab, setCurrentTab] = useState<'control' | 'settings' | 'import'>('control');
 
   // Estado central + lógica de negocio vehicular (useAppState).
   // Se consumen sólo los handlers vehiculares y de configuración: los de
@@ -37,7 +39,7 @@ export default function App() {
 
   // Catálogo mínimo de vehículos autorizados (PATENTE → EMPRESA → AUTORIZADO).
   // Persistencia local; NO REGISTRADO es sólo informativo y nunca bloquea.
-  const { catalog } = useVehicleCatalog();
+  const { catalog, importVehicles } = useVehicleCatalog();
 
   // Emergency lockdown toggle (estado de UI, no persiste en profile)
   const [emergencyLock, setEmergencyLock] = useState<boolean>(() => {
@@ -108,6 +110,16 @@ export default function App() {
             {clock || '19:08:43'}
           </div>
 
+          {/* Acceso a la sección administrativa IMPORTAR PATENTES */}
+          <button
+            onClick={() => setCurrentTab('import')}
+            className="p-1.5 sm:p-2 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800 transition-all flex-shrink-0 active:scale-95"
+            title="Importar patentes (CSV)"
+            aria-label="Importar patentes"
+          >
+            <Upload className="w-4 h-4 text-slate-300" />
+          </button>
+
           <button
             onClick={() => setCurrentTab('settings')}
             className={`p-1.5 sm:p-2 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800 transition-all relative flex-shrink-0 ${
@@ -141,6 +153,14 @@ export default function App() {
             clock={clock}
             onShowToast={(t) => setToast(t)}
             onOpenSettings={() => setCurrentTab('settings')}
+          />
+        )}
+
+        {currentTab === 'import' && (
+          <ImportPatentes
+            catalog={catalog}
+            onImport={importVehicles}
+            onBack={() => setCurrentTab('control')}
           />
         )}
 

@@ -92,5 +92,39 @@ export function useVehicleCatalog() {
     setCatalog(INITIAL_AUTHORIZED_VEHICLES.map(v => ({ ...v })));
   };
 
-  return { catalog, addVehicle, removeVehicle, restoreDefaults, generateId };
+  /**
+   * Aplica un PLAN de importación masiva (ver `domain/vehicleCatalogCsv.ts`)
+   * sobre el catálogo existente.
+   *
+   * IMPORTANTE: usa el MISMO `setCatalog`/persistencia que el resto del hook,
+   * así que la fuente de verdad NO cambia (sigue siendo `catalog` bajo
+   * `securguard_vehicle_catalog_v1`). No crea una base paralela.
+   *
+   * Devuelve el número de entradas realmente agregadas.
+   */
+  const importVehicles = (entries: AuthorizedVehicle[]): number => {
+    let addedCount = 0;
+
+    setCatalog(prev => {
+      const seen = new Set(prev.map(v => normalizePlate(v.plate)));
+      const fresh: AuthorizedVehicle[] = [];
+
+      for (const e of entries) {
+        const plate = normalizePlate(e.plate);
+        const company = typeof e.company === 'string' ? e.company.trim() : '';
+        if (plate === '' || company === '') continue;
+        // Duplicados por patente (canónicos) se descartan.
+        if (seen.has(plate)) continue;
+        seen.add(plate);
+        fresh.push({ plate, company });
+      }
+
+      addedCount = fresh.length;
+      return fresh.length === 0 ? prev : [...prev, ...fresh];
+    });
+
+    return addedCount;
+  };
+
+  return { catalog, addVehicle, removeVehicle, restoreDefaults, importVehicles, generateId };
 }
